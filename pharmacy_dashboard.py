@@ -23,6 +23,8 @@ if 'tab1_result' not in st.session_state:
     st.session_state.tab1_result = None
 if 'tab2_result' not in st.session_state:
     st.session_state.tab2_result = None
+if 'order_result' not in st.session_state:
+    st.session_state.order_result = None
 
 # ── Brand colors ──────────────────────────────────────────────────────────────
 BLUE   = "#0066CC"
@@ -330,7 +332,7 @@ else:
     )
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_ovm, tab_two, tab_map = st.tabs(["📊 One vs Many", "🔍 Compare Two", "🗺️ Full Map"])
+tab_ovm, tab_map, tab_order = st.tabs(["📊 One vs Many", "🗺️ Full Map", "📦 Multi-Item Order"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -371,10 +373,20 @@ with tab_ovm:
         if uploaded_file:
             try:
                 xls = pd.read_excel(uploaded_file)
-                # Normalize column names (strip spaces)
                 xls.columns = xls.columns.str.strip()
+                # ── Normalize column names ────────────────────────────────────
+                xls_aliases = {
+                    'Branch':            ['Branch', 'Plant'],
+                    'UnRestrictedStock': ['UnRestrictedStock', 'Quantity'],
+                }
+                for standard, aliases in xls_aliases.items():
+                    for alias in aliases:
+                        if alias in xls.columns and standard not in xls.columns:
+                            xls = xls.rename(columns={alias: standard})
+                            break
+
                 if 'Branch' not in xls.columns:
-                    st.error("❌ Column **Branch** not found in the uploaded file.")
+                    st.error("❌ Branch column not found. Accepted names: **Branch** or **Plant**")
                 else:
                     xls['Branch'] = xls['Branch'].astype(str).str.strip().str.upper()
                     xls = xls.dropna(subset=['Branch'])
@@ -516,84 +528,6 @@ with tab_ovm:
         st_folium(m, width=720, height=480, key="ovm_map")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  TAB 2 — COMPARE TWO BRANCHES
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_two:
-    st.markdown('<div class="sub-header">Enter two branch codes to compare</div>',
-                unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        branch1_code = st.text_input("🔹 First Branch", value="P001", key="b1")
-    with col2:
-        branch2_code = st.text_input("🔹 Second Branch", value="P300", key="b2")
-
-    if st.button("🔍 Calculate Distance", key="calc_two", use_container_width=True):
-        b1_rows = df[df['SAP Store Code'].str.upper() == branch1_code.upper().strip()]
-        b2_rows = df[df['SAP Store Code'].str.upper() == branch2_code.upper().strip()]
-
-        if len(b1_rows) == 0:
-            st.error(f"❌ Branch **{branch1_code}** not found.")
-            st.session_state.tab1_result = None
-        elif len(b2_rows) == 0:
-            st.error(f"❌ Branch **{branch2_code}** not found.")
-            st.session_state.tab1_result = None
-        else:
-            b1, b2 = b1_rows.iloc[0], b2_rows.iloc[0]
-            dist = haversine_distance(b1['Latitude'], b1['Longitude'],
-                                      b2['Latitude'], b2['Longitude'])
-            t_min, spd = estimate_driving_time(dist, b1['City'])
-            st.session_state.tab1_result = dict(
-                b1_code=b1['SAP Store Code'], b1_address=b1['English Address'],
-                b1_city=b1['City'], b1_lat=b1['Latitude'], b1_lon=b1['Longitude'],
-                b2_code=b2['SAP Store Code'], b2_address=b2['English Address'],
-                b2_city=b2['City'], b2_lat=b2['Latitude'], b2_lon=b2['Longitude'],
-                distance=dist, time=t_min, speed=spd
-            )
-            st.rerun()
-
-    if st.session_state.tab1_result:
-        r = st.session_state.tab1_result
-        st.markdown("---")
-        st.markdown(f"""
-        <div class="result-card">
-            <h3 style="color:{TEAL}; margin-bottom:18px;">📊 Comparison Result</h3>
-            <div style="display:flex; gap:14px; align-items:stretch;">
-                <div class="branch-info" style="flex:1;">
-                    <h4 style="color:{ORANGE}; margin-bottom:8px;">🔹 From: {r['b1_code']}</h4>
-                    <p style="font-size:14px; line-height:1.6; margin:0;">{r['b1_address']}</p>
-                    <p style="color:#888; font-size:13px; margin-top:6px;">📍 {r['b1_city']}</p>
-                </div>
-                <div class="arrow-container">➡️</div>
-                <div class="branch-info" style="flex:1;">
-                    <h4 style="color:{ORANGE}; margin-bottom:8px;">🔹 To: {r['b2_code']}</h4>
-                    <p style="font-size:14px; line-height:1.6; margin:0;">{r['b2_address']}</p>
-                    <p style="color:#888; font-size:13px; margin-top:6px;">📍 {r['b2_city']}</p>
-                </div>
-            </div>
-            <div style="text-align:center; margin-top:22px; padding:18px;
-                        background:#1e1e2e; border-radius:12px;">
-                <span class="distance-badge">📏 {r['distance']:.1f} km</span>
-            </div>
-        </div>""", unsafe_allow_html=True)
-
-        m = folium.Map(
-            location=[(r['b1_lat']+r['b2_lat'])/2, (r['b1_lon']+r['b2_lon'])/2],
-            zoom_start=10
-        )
-        folium.Marker([r['b1_lat'], r['b1_lon']],
-                      popup=r['b1_code'], tooltip=f"From: {r['b1_code']}",
-                      icon=folium.Icon(color='blue', icon='play', prefix='fa')).add_to(m)
-        folium.Marker([r['b2_lat'], r['b2_lon']],
-                      popup=r['b2_code'], tooltip=f"To: {r['b2_code']}",
-                      icon=folium.Icon(color='red', icon='stop', prefix='fa')).add_to(m)
-        folium.PolyLine(
-            [(r['b1_lat'], r['b1_lon']), (r['b2_lat'], r['b2_lon'])],
-            color='#00ff88', weight=4, opacity=0.8
-        ).add_to(m)
-        st_folium(m, width=720, height=420, key="two_map")
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 3 — FULL MAP
@@ -701,3 +635,195 @@ with tab_map:
     st.markdown("<h4 style='color:#e0e0e0;'>📋 Branch List</h4>", unsafe_allow_html=True)
     display_df = filtered_df[['SAP Store Code','English Address','City','Latitude','Longitude']].copy()
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=380)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB 4 — MULTI-ITEM ORDER
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_order:
+    st.markdown('<div class="sub-header">📦 Find branches that can fulfill a multi-item order</div>',
+                unsafe_allow_html=True)
+
+    src_order = st.text_input("🔹 Source Branch Code (to calculate distance from)",
+                               value="P001", key="order_source")
+
+    st.markdown("<p style='color:#aaa; margin-bottom:4px;'>Upload stock Excel file "
+                "(must have <b>MaterialName</b>, <b>Branch</b>, <b>UnRestrictedStock</b> columns):</p>",
+                unsafe_allow_html=True)
+    order_file = st.file_uploader("", type=["xlsx","xls"], key="order_upload")
+
+    if order_file:
+        try:
+            oxls = pd.read_excel(order_file)
+            oxls.columns = oxls.columns.str.strip()
+
+            # ── Normalize column names (support multiple file formats) ────────
+            col_aliases = {
+                'Branch':            ['Branch', 'Plant'],
+                'MaterialName':      ['MaterialName', 'English Material Name', 'Material Name'],
+                'UnRestrictedStock': ['UnRestrictedStock', 'Quantity'],
+            }
+            for standard, aliases in col_aliases.items():
+                for alias in aliases:
+                    if alias in oxls.columns and standard not in oxls.columns:
+                        oxls = oxls.rename(columns={alias: standard})
+                        break
+
+            required_cols = {'MaterialName', 'Branch', 'UnRestrictedStock'}
+            missing = required_cols - set(oxls.columns)
+            if missing:
+                st.error(f"❌ Missing columns: {', '.join(missing)}  \n"
+                         f"Accepted names → Branch: **Branch / Plant** · "
+                         f"Material: **MaterialName / English Material Name** · "
+                         f"Stock: **UnRestrictedStock / Quantity**")
+            else:
+                oxls['Branch']             = oxls['Branch'].astype(str).str.strip().str.upper()
+                oxls['UnRestrictedStock']  = pd.to_numeric(oxls['UnRestrictedStock'], errors='coerce').fillna(0)
+                oxls['MaterialName']       = oxls['MaterialName'].astype(str).str.strip()
+
+                # Pivot: rows=Branch, cols=MaterialName, values=sum of stock
+                pivot = oxls.groupby(['Branch','MaterialName'])['UnRestrictedStock'].sum().unstack(fill_value=0)
+                all_materials = sorted(pivot.columns.tolist())
+
+                st.markdown("---")
+                st.markdown(
+                    f"<p style='color:{TEAL}; font-weight:600;'>Found <b>{len(all_materials)}</b> material(s) — "
+                    f"set required quantity for each:</p>",
+                    unsafe_allow_html=True
+                )
+
+                # ── Quantity inputs per material ──────────────────────────────
+                needed = {}
+                cols_per_row = 2
+                mat_chunks = [all_materials[i:i+cols_per_row]
+                              for i in range(0, len(all_materials), cols_per_row)]
+                for chunk in mat_chunks:
+                    cols_ui = st.columns(cols_per_row)
+                    for j, mat in enumerate(chunk):
+                        with cols_ui[j]:
+                            qty = st.number_input(
+                                f"🔹 {mat[:45]}{'…' if len(mat)>45 else ''}",
+                                min_value=0, value=1, step=1,
+                                key=f"qty_{mat}"
+                            )
+                            needed[mat] = qty
+
+                st.markdown("---")
+
+                if st.button("🔍 Find Fulfilling Branches", key="calc_order",
+                             use_container_width=True):
+
+                    # Filter to only materials where qty > 0
+                    needed_filtered = {m: q for m, q in needed.items() if q > 0}
+                    if not needed_filtered:
+                        st.warning("⚠️ Please set a quantity > 0 for at least one material.")
+                    else:
+                        src_row = df[df['SAP Store Code'].str.upper() == src_order.upper().strip()]
+                        if len(src_row) == 0:
+                            st.error(f"❌ Source branch **{src_order}** not found.")
+                        else:
+                            src = src_row.iloc[0]
+
+                            # Find branches that satisfy ALL needed materials
+                            eligible = pivot.copy()
+                            for mat, qty in needed_filtered.items():
+                                if mat in eligible.columns:
+                                    eligible = eligible[eligible[mat] >= qty]
+
+                            if len(eligible) == 0:
+                                st.warning("⚠️ No single branch can fulfill the entire order.")
+                            else:
+                                order_results = []
+                                for branch_code in eligible.index:
+                                    tgt_row = df[df['SAP Store Code'].str.upper() == branch_code]
+                                    if len(tgt_row) == 0:
+                                        continue
+                                    tgt  = tgt_row.iloc[0]
+                                    dist = haversine_distance(src['Latitude'], src['Longitude'],
+                                                              tgt['Latitude'], tgt['Longitude'])
+                                    t_min, _ = estimate_driving_time(dist, src['City'])
+                                    row_data = {
+                                        'Rank':          0,
+                                        'Branch':        branch_code,
+                                        'City':          tgt['City'],
+                                        'Distance (km)': round(dist, 1),
+                                        'Time':          format_time(t_min),
+                                    }
+                                    # Add stock per material
+                                    for mat in needed_filtered:
+                                        row_data[f'Stock: {mat[:25]}'] = int(eligible.loc[branch_code, mat]) \
+                                            if mat in eligible.columns else 0
+                                    order_results.append(row_data)
+
+                                res_df = pd.DataFrame(order_results).sort_values('Distance (km)')
+                                res_df['Rank'] = range(1, len(res_df) + 1)
+                                # ── Save to session state ─────────────────────
+                                st.session_state.order_result = {
+                                    'res_df':     res_df.to_dict('records'),
+                                    'src_code':   src_order.upper(),
+                                    'src_lat':    src['Latitude'],
+                                    'src_lon':    src['Longitude'],
+                                    'count':      len(res_df),
+                                }
+                                st.rerun()
+
+        except Exception as ex:
+            st.error(f"❌ Error reading file: {ex}")
+
+    # ── Display saved results ─────────────────────────────────────────────────
+    if st.session_state.order_result:
+        ro = st.session_state.order_result
+        res_df = pd.DataFrame(ro['res_df'])
+        st.markdown("---")
+        st.success(
+            f"✅ **{ro['count']}** branch(es) can fulfill the full order — "
+            f"sorted by distance from **{ro['src_code']}**"
+        )
+
+        stock_cols = [c for c in res_df.columns if c.startswith('Stock:')]
+        show_t = st.checkbox("⏱️ Show Time", value=False, key="order_show_time")
+        base_cols = ['Rank', 'Branch', 'City', 'Distance (km)']
+        if show_t:
+            base_cols.append('Time')
+        base_cols += stock_cols
+
+        styled = res_df[base_cols].style.map(highlight_distance, subset=['Distance (km)'])
+        st.dataframe(styled, use_container_width=True, hide_index=True, height=420)
+
+        # ── Map top 10 ────────────────────────────────────────────────────────
+        top10_o = res_df.head(10).reset_index(drop=True)
+        top10_o = top10_o.merge(
+            df[['SAP Store Code', 'Latitude', 'Longitude']].rename(
+                columns={'SAP Store Code': 'Branch'}),
+            on='Branch', how='left'
+        )
+        st.markdown(
+            "<h4 style='color:#e0e0e0; margin-top:20px;'>"
+            "🗺️ Top 10 Nearest Fulfilling Branches</h4>",
+            unsafe_allow_html=True
+        )
+        map_colors = ['red', 'orange', 'green', 'blue', 'purple',
+                      'darkred', 'darkblue', 'darkgreen', 'cadetblue', 'pink']
+        mo = folium.Map(location=[ro['src_lat'], ro['src_lon']], zoom_start=6)
+        folium.Marker(
+            [ro['src_lat'], ro['src_lon']],
+            popup=f"Source: {ro['src_code']}",
+            tooltip=f"📍 {ro['src_code']} (Source)",
+            icon=folium.Icon(color='black', icon='star', prefix='fa')
+        ).add_to(mo)
+        for i, r2 in top10_o.iterrows():
+            if pd.isna(r2.get('Latitude')):
+                continue
+            color = map_colors[i % len(map_colors)]
+            folium.Marker(
+                [r2['Latitude'], r2['Longitude']],
+                popup=f"{r2['Branch']} – {r2['Distance (km)']} km",
+                tooltip=f"#{i+1} {r2['Branch']} ({r2['City']})",
+                icon=folium.Icon(color=color, icon='circle', prefix='fa')
+            ).add_to(mo)
+            folium.PolyLine(
+                [(ro['src_lat'], ro['src_lon']),
+                 (r2['Latitude'], r2['Longitude'])],
+                color=color, weight=3, opacity=0.7
+            ).add_to(mo)
+        st_folium(mo, width=720, height=480, key="order_map")
