@@ -66,7 +66,6 @@ st.markdown(f"""
         box-shadow: 0 6px 18px rgba(0,102,204,0.35);
     }}
 
-    /* Tab styling */
     .stTabs [data-baseweb="tab-list"] {{ gap: 6px; }}
     .stTabs [data-baseweb="tab"] {{
         background-color: #1e1e2e;
@@ -91,17 +90,6 @@ st.markdown(f"""
 
     .distance-badge {{
         background: linear-gradient(135deg, {BLUE}, {TEAL});
-        color: white;
-        padding: 11px 22px;
-        border-radius: 25px;
-        font-weight: bold;
-        font-size: 19px;
-        display: inline-block;
-        margin: 6px;
-    }}
-
-    .time-badge {{
-        background-color: #28a745;
         color: white;
         padding: 11px 22px;
         border-radius: 25px;
@@ -144,7 +132,6 @@ st.markdown(f"""
         color: {TEAL};
     }}
 
-    /* Color legend pill */
     .legend-pill {{
         display: inline-block;
         padding: 4px 12px;
@@ -212,15 +199,10 @@ def extract_city(address):
     return "Unknown"
 
 def highlight_distance(val):
-    """Color rows by distance thresholds."""
-    if val < 10:
-        return 'background-color: #1b5e20; color: white'
-    elif val < 20:
-        return 'background-color: #f9a825; color: #111'
-    elif val < 30:
-        return 'background-color: #e65100; color: white'
-    else:
-        return 'background-color: #b71c1c; color: white'
+    if val < 10:   return 'background-color: #1b5e20; color: white'
+    elif val < 20: return 'background-color: #f9a825; color: #111'
+    elif val < 30: return 'background-color: #e65100; color: white'
+    else:          return 'background-color: #b71c1c; color: white'
 
 
 # ── Load data ─────────────────────────────────────────────────────────────────
@@ -253,16 +235,14 @@ except Exception as e:
     st.stop()
 
 
-# ── Logo helpers ─────────────────────────────────────────────────────────────
+# ── Logo helpers ──────────────────────────────────────────────────────────────
 
 @st.cache_data
 def load_logo_base64(path):
-    """Load logo, remove white background, return base64 PNG string."""
     img = Image.open(path).convert("RGBA")
     data = img.getdata()
     new_data = []
     for r, g, b, a in data:
-        # Make white / near-white pixels transparent
         if r > 210 and g > 210 and b > 210:
             new_data.append((r, g, b, 0))
         else:
@@ -275,7 +255,6 @@ def load_logo_base64(path):
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
-# Support logo.png, logo.jpg, logo.png.jpg, or logo.jpeg
 _logo_candidates = ['logo.png', 'logo.jpg', 'logo.png.jpg', 'logo.jpeg']
 LOGO_PATH = next(
     (os.path.join(os.path.dirname(__file__), f) for f in _logo_candidates
@@ -304,14 +283,11 @@ else:
     """, unsafe_allow_html=True)
 
 st.sidebar.markdown("---")
-
 c1, c2 = st.sidebar.columns(2)
 c1.metric("Branches", len(df))
 c2.metric("Cities", df['City'].nunique())
 
 st.sidebar.markdown("---")
-
-# Color legend
 st.sidebar.markdown("""
 <div style="font-size:13px; color:#bbb; padding:4px 0 8px 0; font-weight:600;">
     Distance Color Guide
@@ -353,7 +329,7 @@ else:
         unsafe_allow_html=True
     )
 
-# ── Tabs  (One vs Many is FIRST = default) ────────────────────────────────────
+# ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_ovm, tab_two, tab_map = st.tabs(["📊 One vs Many", "🔍 Compare Two", "🗺️ Full Map"])
 
 
@@ -364,21 +340,68 @@ with tab_ovm:
     st.markdown('<div class="sub-header">Sort branches by distance from a source branch</div>',
                 unsafe_allow_html=True)
 
-    source_branch  = st.text_input("🔹 Source Branch Code", value="P001", key="source")
-    st.markdown("<p style='color:#aaa; margin-bottom:6px;'>Target branch codes (comma or newline separated):</p>",
-                unsafe_allow_html=True)
-    target_branches = st.text_area("", value="P002, P003, P004, P005, P010",
-                                   height=100, key="targets")
+    source_branch = st.text_input("🔹 Source Branch Code", value="P001", key="source")
+
+    # ── Input mode toggle ─────────────────────────────────────────────────────
+    input_mode = st.radio(
+        "Target branches input method:",
+        ["✏️ Manual Input", "📂 Upload Excel File"],
+        horizontal=True,
+        key="input_mode"
+    )
+
+    stock_map   = {}   # {branch_code: stock_value}  — filled from Excel upload
+    target_list = []
+
+    if input_mode == "✏️ Manual Input":
+        st.markdown("<p style='color:#aaa; margin-bottom:6px;'>Target branch codes (comma or newline separated):</p>",
+                    unsafe_allow_html=True)
+        target_branches = st.text_area("", value="P002, P003, P004, P005, P010",
+                                       height=100, key="targets")
+        target_list = [t.strip().upper()
+                       for t in re.split(r'[,\n]', target_branches) if t.strip()]
+
+    else:  # Upload Excel
+        st.markdown(
+            "<p style='color:#aaa; margin-bottom:4px;'>Upload Excel with <b>Branch</b> and "
+            "<b>UnRestrictedStock</b> columns:</p>",
+            unsafe_allow_html=True
+        )
+        uploaded_file = st.file_uploader("", type=["xlsx", "xls"], key="excel_upload")
+        if uploaded_file:
+            try:
+                xls = pd.read_excel(uploaded_file)
+                # Normalize column names (strip spaces)
+                xls.columns = xls.columns.str.strip()
+                if 'Branch' not in xls.columns:
+                    st.error("❌ Column **Branch** not found in the uploaded file.")
+                else:
+                    xls['Branch'] = xls['Branch'].astype(str).str.strip().str.upper()
+                    xls = xls.dropna(subset=['Branch'])
+                    if 'UnRestrictedStock' in xls.columns:
+                        xls['UnRestrictedStock'] = pd.to_numeric(xls['UnRestrictedStock'], errors='coerce').fillna(0)
+                        # ── Keep only branches with stock > 0 ─────────────────
+                        xls = xls[xls['UnRestrictedStock'] > 0]
+                        stock_map = (
+                            xls.groupby('Branch')['UnRestrictedStock']
+                               .sum()
+                               .astype(int)
+                               .to_dict()
+                        )
+                    target_list = xls['Branch'].unique().tolist()
+                    st.success(f"✅ {len(target_list)} branches with stock > 0 loaded from file.")
+            except Exception as ex:
+                st.error(f"❌ Could not read file: {ex}")
 
     if st.button("📊 Sort by Distance", key="calc_ovm", use_container_width=True):
         source = df[df['SAP Store Code'].str.upper() == source_branch.upper().strip()]
         if len(source) == 0:
             st.error(f"❌ Branch **{source_branch}** not found in the database.")
             st.session_state.tab2_result = None
+        elif not target_list:
+            st.warning("⚠️ No branch codes to process.")
         else:
             src = source.iloc[0]
-            target_list = [t.strip().upper()
-                           for t in re.split(r'[,\n]', target_branches) if t.strip()]
             results, errors = [], []
             for t_code in target_list:
                 tgt_row = df[df['SAP Store Code'].str.upper() == t_code]
@@ -393,7 +416,7 @@ with tab_ovm:
                         'City':          tgt['City'],
                         'Distance (km)': round(dist, 1),
                         'Time':          format_time(t_min),
-                        'Speed (km/h)':  spd,
+                        'Stock':         stock_map.get(t_code, None),
                         'lat':           tgt['Latitude'],
                         'lon':           tgt['Longitude'],
                     })
@@ -411,12 +434,12 @@ with tab_ovm:
                     'source_lon':     src['Longitude'],
                     'results':        rdf.to_dict('records'),
                     'errors':         errors,
+                    'has_stock':      bool(stock_map),
                 }
                 st.rerun()
             else:
                 st.warning("⚠️ No valid branch codes found.")
 
-    # ── Display result ────────────────────────────────────────────────────────
     if st.session_state.tab2_result:
         r = st.session_state.tab2_result
         st.markdown("---")
@@ -433,20 +456,31 @@ with tab_ovm:
         if r['errors']:
             st.warning(f"⚠️ Not found: {', '.join(r['errors'])}")
 
-        results_df  = pd.DataFrame(r['results'])
-        display_df  = results_df[['Rank', 'Branch', 'City', 'Distance (km)', 'Time']].copy()
-        styled_df   = display_df.style.map(highlight_distance, subset=['Distance (km)'])
+        results_df = pd.DataFrame(r['results'])
+        show_time = st.checkbox("⏱️ Show Time column", value=False, key="show_time_col")
+
+        # Base columns
+        cols = ['Rank', 'Branch', 'City', 'Distance (km)']
+        if show_time:
+            cols.append('Time')
+        # Add Stock column only if data came from Excel upload
+        if r.get('has_stock') and 'Stock' in results_df.columns:
+            cols.append('Stock')
+
+        display_df = results_df[cols].copy()
+        if r.get('has_stock') and 'Stock' in display_df.columns:
+            display_df['Stock'] = display_df['Stock'].fillna('—')
+        styled_df  = display_df.style.map(highlight_distance, subset=['Distance (km)'])
         st.dataframe(styled_df, use_container_width=True, hide_index=True, height=420)
 
-        # ── Top 10 map ────────────────────────────────────────────────────────
         top10 = results_df.head(10).reset_index(drop=True)
         st.markdown(
             "<h4 style='color:#e0e0e0; margin-top:24px;'>🗺️ Top 10 Nearest Branches on Map</h4>",
             unsafe_allow_html=True
         )
 
-        map_colors  = ['red','orange','green','blue','purple',
-                       'darkred','darkblue','darkgreen','cadetblue','pink']
+        map_colors = ['red','orange','green','blue','purple',
+                      'darkred','darkblue','darkgreen','cadetblue','pink']
         m = folium.Map(location=[r['source_lat'], r['source_lon']], zoom_start=6)
         folium.Marker(
             [r['source_lat'], r['source_lon']],
@@ -541,10 +575,6 @@ with tab_two:
             <div style="text-align:center; margin-top:22px; padding:18px;
                         background:#1e1e2e; border-radius:12px;">
                 <span class="distance-badge">📏 {r['distance']:.1f} km</span>
-                <span class="time-badge">🚗 {format_time(r['time'])}</span>
-                <p style="color:#888; margin-top:12px; font-size:13px;">
-                    ⚡ Estimated avg speed: {r['speed']} km/h
-                </p>
             </div>
         </div>""", unsafe_allow_html=True)
 
@@ -572,8 +602,6 @@ with tab_map:
     st.markdown('<div class="sub-header">🗺️ Interactive Map of All Branches</div>',
                 unsafe_allow_html=True)
 
-    # ── Controls row ──────────────────────────────────────────────────────────
-    # Build neighborhood selectbox options once (all branches as searchable options)
     NBR_PLACEHOLDER = "— Type to search by neighborhood / address —"
     nbr_options = [NBR_PLACEHOLDER] + [
         f"{row['SAP Store Code']}  ·  {row['English Address'][:60]}  ·  {row['City']}"
@@ -584,15 +612,13 @@ with tab_map:
     with ctrl1:
         search_code = st.text_input(
             "🔍 Highlight by Code",
-            value="",
-            placeholder="e.g. P001",
+            value="", placeholder="e.g. P001",
             key="map_search"
         )
     with ctrl2:
         nbr_selected = st.selectbox(
             "🏘️ Search by Neighborhood",
-            options=nbr_options,
-            index=0,
+            options=nbr_options, index=0,
             key="nbr_sel"
         )
     with ctrl3:
@@ -601,13 +627,11 @@ with tab_map:
                                      options=all_cities, default=[],
                                      key="city_filter")
 
-    # Neighborhood selectbox overrides code search when a branch is selected
     if nbr_selected and nbr_selected != NBR_PLACEHOLDER:
         search_code = nbr_selected.split("  ·  ")[0].strip()
 
     filtered_df = df if not city_filter else df[df['City'].isin(city_filter)]
 
-    # ── Stats ─────────────────────────────────────────────────────────────────
     m1, m2, m3 = st.columns(3)
     m1.metric("📊 Branches Shown", len(filtered_df))
     m2.metric("🏙️ Cities", filtered_df['City'].nunique())
@@ -615,7 +639,6 @@ with tab_map:
     avg_lon = filtered_df['Longitude'].mean()
     m3.metric("📍 Map Center", f"{avg_lat:.2f}, {avg_lon:.2f}")
 
-    # ── Resolve highlighted branch ────────────────────────────────────────────
     highlight_code = search_code.upper().strip()
     highlight_row  = None
     if highlight_code:
@@ -625,7 +648,6 @@ with tab_map:
         else:
             st.warning(f"⚠️ Branch **{search_code}** not found.")
 
-    # ── Build map ─────────────────────────────────────────────────────────────
     if len(filtered_df) > 0:
         center_lat = highlight_row['Latitude']  if highlight_row is not None else avg_lat
         center_lon = highlight_row['Longitude'] if highlight_row is not None else avg_lon
@@ -635,7 +657,7 @@ with tab_map:
                        zoom_start=zoom, tiles='CartoDB dark_matter')
 
         for _, row in filtered_df.iterrows():
-            code = str(row['SAP Store Code']).upper()
+            code          = str(row['SAP Store Code']).upper()
             is_highlighted = (highlight_code and code == highlight_code)
 
             if is_highlighted:
@@ -675,7 +697,6 @@ with tab_map:
 
         st_folium(m, width=820, height=600, key="full_map")
 
-    # ── Branch list table ─────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("<h4 style='color:#e0e0e0;'>📋 Branch List</h4>", unsafe_allow_html=True)
     display_df = filtered_df[['SAP Store Code','English Address','City','Latitude','Longitude']].copy()
