@@ -724,46 +724,51 @@ with tab_order:
                         else:
                             src = src_row.iloc[0]
 
-                            # Find branches that satisfy ALL needed materials
-                            eligible = pivot.copy()
-                            for mat, qty in needed_filtered.items():
-                                if mat in eligible.columns:
-                                    eligible = eligible[eligible[mat] >= qty]
+                            # ── Score every branch by how many items it can fulfill ──
+                            total_items = len(needed_filtered)
+                            order_results = []
+                            for branch_code in pivot.index:
+                                tgt_row = df[df['SAP Store Code'].str.upper() == branch_code]
+                                if len(tgt_row) == 0:
+                                    continue
+                                tgt   = tgt_row.iloc[0]
+                                dist  = haversine_distance(src['Latitude'], src['Longitude'],
+                                                           tgt['Latitude'], tgt['Longitude'])
+                                t_min, _ = estimate_driving_time(dist, src['City'])
 
-                            if len(eligible) == 0:
-                                st.warning("⚠️ No single branch can fulfill the entire order.")
+                                match_count = sum(
+                                    1 for mat, qty in needed_filtered.items()
+                                    if mat in pivot.columns and pivot.loc[branch_code, mat] >= qty
+                                )
+                                if match_count == 0:
+                                    continue
+
+                                row_data = {
+                                    'Branch':        branch_code,
+                                    'City':          tgt['City'],
+                                    'Distance (km)': round(dist, 1),
+                                    'Time':          format_time(t_min),
+                                    'Match':         match_count,
+                                }
+                                for mat in needed_filtered:
+                                    row_data[f'Stock: {mat[:25]}'] = (
+                                        int(pivot.loc[branch_code, mat])
+                                        if mat in pivot.columns else 0
+                                    )
+                                order_results.append(row_data)
+
+                            if not order_results:
+                                st.warning("⚠️ No branch has any of the required items.")
                             else:
-                                order_results = []
-                                for branch_code in eligible.index:
-                                    tgt_row = df[df['SAP Store Code'].str.upper() == branch_code]
-                                    if len(tgt_row) == 0:
-                                        continue
-                                    tgt  = tgt_row.iloc[0]
-                                    dist = haversine_distance(src['Latitude'], src['Longitude'],
-                                                              tgt['Latitude'], tgt['Longitude'])
-                                    t_min, _ = estimate_driving_time(dist, src['City'])
-                                    row_data = {
-                                        'Rank':          0,
-                                        'Branch':        branch_code,
-                                        'City':          tgt['City'],
-                                        'Distance (km)': round(dist, 1),
-                                        'Time':          format_time(t_min),
-                                    }
-                                    # Add stock per material
-                                    for mat in needed_filtered:
-                                        row_data[f'Stock: {mat[:25]}'] = int(eligible.loc[branch_code, mat]) \
-                                            if mat in eligible.columns else 0
-                                    order_results.append(row_data)
-
-                                res_df = pd.DataFrame(order_results).sort_values('Distance (km)')
-                                res_df['Rank'] = range(1, len(res_df) + 1)
-                                # ── Save to session state ─────────────────────
+                                res_df = pd.DataFrame(order_results).sort_values(
+                                    ['Match', 'Distance (km)'], ascending=[False, True]
+                                )
                                 st.session_state.order_result = {
-                                    'res_df':     res_df.to_dict('records'),
-                                    'src_code':   src_order.upper(),
-                                    'src_lat':    src['Latitude'],
-                                    'src_lon':    src['Longitude'],
-                                    'count':      len(res_df),
+                                    'res_df':      res_df.to_dict('records'),
+                                    'src_code':    src_order.upper(),
+                                    'src_lat':     src['Latitude'],
+                                    'src_lon':     src['Longitude'],
+                                    'total_items': total_items,
                                 }
                                 st.rerun()
 
@@ -772,26 +777,58 @@ with tab_order:
 
     # ── Display saved results ─────────────────────────────────────────────────
     if st.session_state.order_result:
-        ro = st.session_state.order_result
-        res_df = pd.DataFrame(ro['res_df'])
+        ro          = st.session_state.order_result
+        res_df      = pd.DataFrame(ro['res_df'])
+        total_items = ro.get('total_items', 1)
+        stock_cols  = [c for c in res_df.columns if c.startswith('Stock:')]
+        show_t      = st.checkbox("⏱️ Show Time", value=False, key="order_show_time")
+
         st.markdown("---")
-        st.success(
-            f"✅ **{ro['count']}** branch(es) can fulfill the full order — "
-            f"sorted by distance from **{ro['src_code']}**"
-        )
 
-        stock_cols = [c for c in res_df.columns if c.startswith('Stock:')]
-        show_t = st.checkbox("⏱️ Show Time", value=False, key="order_show_time")
-        base_cols = ['Rank', 'Branch', 'City', 'Distance (km)']
-        if show_t:
-            base_cols.append('Time')
-        base_cols += stock_cols
+        # group color/icon by match level
+        def group_meta(match, total):
+            pct = match / total
+            if pct == 1.0:
+                return "🟢", "#1b5e20", "Full Match"
+            elif pct >= 0.75:
+                return "🟡", "#f9a825", "Good Match"
+            elif pct >= 0.5:
+                return "🟠", "#e65100", "Partial Match"
+            else:
+                return "🔴", "#b71c1c", "Low Match"
 
-        styled = res_df[base_cols].style.map(highlight_distance, subset=['Distance (km)'])
-        st.dataframe(styled, use_container_width=True, hide_index=True, height=420)
+        unique_matches = sorted(res_df['Match'].unique(), reverse=True)
 
-        # ── Map top 10 ────────────────────────────────────────────────────────
-        top10_o = res_df.head(10).reset_index(drop=True)
+        for match_val in unique_matches:
+            group_df = res_df[res_df['Match'] == match_val].copy()
+            group_df = group_df.sort_values('Distance (km)').reset_index(drop=True)
+            group_df.insert(0, 'Rank', range(1, len(group_df) + 1))
+
+            icon, color, label = group_meta(match_val, total_items)
+            st.markdown(
+                f"<div style='background:{color}22; border-left:4px solid {color}; "
+                f"padding:10px 16px; border-radius:8px; margin:14px 0 6px 0;'>"
+                f"<span style='font-size:17px; font-weight:700; color:{color};'>"
+                f"{icon} {label} — {match_val}/{total_items} items</span>"
+                f"<span style='color:#aaa; font-size:13px; margin-left:12px;'>"
+                f"{len(group_df)} branch(es)</span></div>",
+                unsafe_allow_html=True
+            )
+
+            base_cols = ['Rank', 'Branch', 'City', 'Distance (km)']
+            if show_t:
+                base_cols.append('Time')
+            base_cols += stock_cols
+
+            styled = group_df[base_cols].style.map(
+                highlight_distance, subset=['Distance (km)']
+            )
+            st.dataframe(styled, use_container_width=True,
+                         hide_index=True, height=min(420, 50 + len(group_df) * 38))
+
+        # ── Map — top 10 from best group ─────────────────────────────────────
+        best_match  = unique_matches[0]
+        top10_o = res_df[res_df['Match'] == best_match].head(10).reset_index(drop=True)
         top10_o = top10_o.merge(
             df[['SAP Store Code', 'Latitude', 'Longitude']].rename(
                 columns={'SAP Store Code': 'Branch'}),
@@ -799,7 +836,7 @@ with tab_order:
         )
         st.markdown(
             "<h4 style='color:#e0e0e0; margin-top:20px;'>"
-            "🗺️ Top 10 Nearest Fulfilling Branches</h4>",
+            "🗺️ Top 10 Nearest — Best Match Group</h4>",
             unsafe_allow_html=True
         )
         map_colors = ['red', 'orange', 'green', 'blue', 'purple',
