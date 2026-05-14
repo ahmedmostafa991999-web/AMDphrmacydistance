@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import os
+import io
+import base64
+from PIL import Image
 
 st.set_page_config(
     page_title="Raqeeb – United Pharmacy",
@@ -80,6 +83,38 @@ branches_df   = load_branches()
 medications_df = load_medications()
 
 all_cities = sorted(branches_df['City'].unique())
+
+# ── Logo ─────────────────────────────────────────────────────────────────────
+@st.cache_data
+def load_logo_base64(path):
+    img = Image.open(path).convert("RGBA")
+    data = img.getdata()
+    new_data = []
+    for r, g, b, a in data:
+        if r > 210 and g > 210 and b > 210:
+            new_data.append((r, g, b, 0))
+        else:
+            new_data.append((r, g, b, a))
+    img.putdata(new_data)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+_logo_candidates = ['logo.png', 'logo.jpg', 'logo.png.jpg', 'logo.jpeg']
+_base = os.path.join(os.path.dirname(__file__), '..')
+LOGO_PATH = next(
+    (os.path.join(_base, f) for f in _logo_candidates
+     if os.path.exists(os.path.join(_base, f))),
+    None
+)
+if LOGO_PATH:
+    logo_b64 = load_logo_base64(LOGO_PATH)
+    st.sidebar.markdown(f"""
+    <div style="text-align:center; padding:14px 0 6px 0;">
+        <img src="data:image/png;base64,{logo_b64}"
+             style="width:160px; height:auto; background:transparent;">
+    </div>
+    """, unsafe_allow_html=True)
 
 # ── Sidebar stats ─────────────────────────────────────────────────────────────
 st.sidebar.markdown("---")
