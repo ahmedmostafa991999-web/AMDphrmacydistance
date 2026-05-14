@@ -81,6 +81,14 @@ medications_df = load_medications()
 
 all_cities = sorted(branches_df['City'].unique())
 
+# ── Sidebar stats ─────────────────────────────────────────────────────────────
+st.sidebar.markdown("---")
+c1, c2 = st.sidebar.columns(2)
+c1.metric("🏥 Branches", len(branches_df))
+c2.metric("🏙️ Cities", branches_df['City'].nunique())
+st.sidebar.metric("💊 Medications", len(medications_df))
+st.sidebar.markdown("---")
+
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_city, tab_item = st.tabs(["🏙️ Search by City", "🔍 Search by Item"])
 
