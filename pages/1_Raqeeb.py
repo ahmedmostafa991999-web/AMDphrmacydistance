@@ -136,53 +136,60 @@ with tab_city:
 #  TAB 2 — SEARCH BY ITEM
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_item:
-    st.markdown("<p style='color:#aaa; font-size:15px;'>Search for any medication by name, code, or type — partial match supported.</p>",
+    st.markdown("<p style='color:#aaa; font-size:15px;'>Type any part of the name or code — results filter as you select.</p>",
                 unsafe_allow_html=True)
 
-    search_q = st.text_input("🔍 Search medication", placeholder="e.g. Gonal, 101545, Hormones",
-                              key="raqeeb_item_search")
+    # Build options list for selectbox
+    ITEM_PLACEHOLDER = "— Type to search medication —"
+    med_options = [ITEM_PLACEHOLDER] + [
+        f"{row['Material']}  ·  {row['Material Description']}  ·  {row['Material Type']}"
+        for _, row in medications_df.iterrows()
+    ]
 
-    if search_q.strip():
-        q = search_q.strip().lower()
-        mask = (
-            medications_df['Material Description'].str.lower().str.contains(q, na=False) |
-            medications_df['Material'].astype(str).str.lower().str.contains(q, na=False) |
-            medications_df['Material Type'].str.lower().str.contains(q, na=False)
-        )
-        results = medications_df[mask].reset_index(drop=True)
+    selected_med = st.selectbox("🔍 Search medication", options=med_options,
+                                 index=0, key="raqeeb_item_sel")
 
-        if len(results) == 0:
-            st.warning("⚠️ No results found.")
-        else:
-            st.markdown(f"<p style='color:{TEAL}; font-weight:600;'>"
-                        f"Found <b>{len(results)}</b> result(s)</p>",
+    if selected_med and selected_med != ITEM_PLACEHOLDER:
+        # Parse selected
+        parts      = selected_med.split("  ·  ")
+        sel_code   = parts[0].strip()
+        sel_name   = parts[1].strip() if len(parts) > 1 else ""
+        sel_type   = parts[2].strip() if len(parts) > 2 else ""
+
+        st.markdown(f"""
+        <div style="background:#1a1a2e; border-left:5px solid {TEAL};
+                    padding:20px 24px; border-radius:12px; margin-top:16px;">
+            <div style="color:{TEAL}; font-size:13px; font-weight:600; margin-bottom:6px;">
+                📦 {sel_type}
+            </div>
+            <div style="color:white; font-size:20px; font-weight:700; margin-bottom:8px;">
+                {sel_name}
+            </div>
+            <div style="color:#888; font-size:13px;">
+                Material Code: <span style="color:{ORANGE}; font-weight:600;">{sel_code}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Show other items in same type
+        same_type = medications_df[medications_df['Material Type'] == sel_type]
+        same_type = same_type[same_type['Material'].astype(str) != sel_code]
+        if len(same_type) > 0:
+            st.markdown(f"<p style='color:#555; font-size:13px; margin-top:16px;'>"
+                        f"Other items in <b>{sel_type}</b> ({len(same_type)}):</p>",
                         unsafe_allow_html=True)
-
-            # Group by Material Type
-            for mat_type, grp in results.groupby('Material Type'):
+            for _, item in same_type.iterrows():
                 st.markdown(f"""
-                <div style="background:#1e1e2e; border-left:4px solid {ORANGE};
-                            padding:8px 14px; border-radius:6px; margin:12px 0 6px 0;">
-                    <span style="color:{ORANGE}; font-weight:700;">📦 {mat_type}</span>
-                    <span style="color:#666; font-size:12px; margin-left:8px;">{len(grp)} item(s)</span>
+                <div style="background:#12122a; border:1px solid #1e1e2e;
+                            padding:10px 14px; border-radius:8px; margin:3px 0;
+                            color:#aaa; font-size:14px;">
+                    {item['Material Description']}
+                    <span style="color:#444; font-size:12px; margin-left:8px;">{item['Material']}</span>
                 </div>
                 """, unsafe_allow_html=True)
-
-                for _, item in grp.iterrows():
-                    st.markdown(f"""
-                    <div style="background:#12122a; border:1px solid #2a2a3a;
-                                padding:12px 16px; border-radius:8px; margin:4px 0;">
-                        <span style="color:white; font-size:15px; font-weight:600;">
-                            {item['Material Description']}
-                        </span>
-                        <span style="color:#555; font-size:12px; margin-left:10px;">
-                            Code: {item['Material']}
-                        </span>
-                    </div>
-                    """, unsafe_allow_html=True)
     else:
         # Show all grouped by type
-        st.markdown(f"<p style='color:#666; font-size:13px;'>Showing all {len(medications_df)} medications:</p>",
+        st.markdown(f"<p style='color:#666; font-size:13px; margin-top:8px;'>All {len(medications_df)} medications:</p>",
                     unsafe_allow_html=True)
         for mat_type, grp in medications_df.groupby('Material Type'):
             with st.expander(f"📦 {mat_type}  ({len(grp)} items)"):
@@ -190,8 +197,6 @@ with tab_item:
                     st.markdown(f"""
                     <div style="padding:6px 0; border-bottom:1px solid #1e1e2e;">
                         <span style="color:white;">{item['Material Description']}</span>
-                        <span style="color:#555; font-size:12px; margin-left:8px;">
-                            {item['Material']}
-                        </span>
+                        <span style="color:#555; font-size:12px; margin-left:8px;">{item['Material']}</span>
                     </div>
                     """, unsafe_allow_html=True)
